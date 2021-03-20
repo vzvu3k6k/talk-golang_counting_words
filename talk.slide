@@ -92,12 +92,15 @@ yebis0942
 
 * もうちょっと詳しく
 
-1. `counts[string(word)]` でmapの値にアクセスするときには、メモリ確保なしで `[]bytes` を `string` に変換する最適化パスを通る。
-2. `counts[string(word)]++` のようにmapに対する代入処理を呼び出したときには、新しくキーを追加する可能性があるので、メモリ確保して `[]bytes` を `string` に変換する。
+1. `counts[string(word)]` でmapの値を参照するときには、メモリ確保なしで `[]bytes` を `string` に変換する最適化パスを通る。
+2. `counts[string(word)]++` のようにmapに値を代入するときには、メモリ確保して `[]bytes` を `string` に変換する。
 
   var m map[string]int
   _ = m[string(v)] // 1
   m[string(v)]++   // 2
+
+1. 参照では既存のキーの値と比較するだけ
+2. 代入処理では新しくキーを追加する可能性がある
 
 * ポインタ使わずに回避できないのか？
 
