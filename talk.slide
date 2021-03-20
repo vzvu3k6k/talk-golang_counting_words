@@ -1,0 +1,105 @@
+Counting Words in Go
+Kyoto.go
+21 Mar 2021
+
+yebis0942
+
+* 自己紹介
+
+- id:yebis0942
+- 仕事ではRailsを使っています
+
+最近気になったニュース:
+
+.link https://github.blog/2021-03-16-improving-large-monorepo-performance-on-github/ Improving large monorepo performance on GitHub - The GitHub Blog
+
+> We’re also in the middle of a significant refactoring effort, doing our part to *decompose* *GitHub’s* *famous* *Ruby* *monolith*, and writing *a* *new* *microservice* *in* *Go* that will improve repository performance for every single user on GitHub.
+
+* 今週見つけた面白記事の紹介をします
+
+* 今週見つけた記事
+
+.link https://benhoyt.com/writings/count-words/ Performance comparison: counting words in Python, Go, C++, C, AWK, Forth, and Rust
+
+「英文の単語の出現回数を数えて、出現回数が多い順に出力する」という課題をいろいろな言語で実装して、パフォーマンス改善してみたという記事。
+
+* Go実装の意外なボトルネックとその解消方法
+
+* 改善前の実装と改善後の実装の差分
+
+.link https://github.com/benhoyt/countwords/blob/49a30699e63d99d1c2799c7b1b36ea5351190b6e/simple.go simple.go
+
+.link https://github.com/benhoyt/countwords/blob/49a30699e63d99d1c2799c7b1b36ea5351190b6e/optimized.go optimized.go
+
+.link https://gist.github.com/vzvu3k6k/2cf4a43ddaaccaafb046d50ebcfb0d27#file-go-diff 両者の差分
+
+* map[string]*int…?
+
+.link https://gist.github.com/vzvu3k6k/2cf4a43ddaaccaafb046d50ebcfb0d27#file-go-intptr-diff 差分
+
+>To reduce the allocations, we’ll use a `map[string]*int` instead of `map[string]int` so we only have to allocate once per unique word, instead of for every increment
+
+* ベンチマーク結果
+
+  $ ./benchmark.py
+  Timing Go 0.61 0.39
+  
+  Language      | Simple | Optimized | Notes
+  ------------- | ------ | --------- | -----
+  Go            |   0.61 |      0.39 |
+
+`Simple` が `map[string]int` 版で、 `Optimized` が `map[string]*int` 版。
+
+なぜか `map[string]int` より `map[string]*int` のほうが早い。
+
+* pprofで見てみると
+
+  $ go tool pprof -top cpuprofile.simple
+  Duration: 808.30ms, Total samples = 610ms (75.47%)
+  Showing nodes accounting for 610ms, 100% of 610ms total
+        flat  flat%   sum%        cum   cum%
+       250ms 40.98% 40.98%      250ms 40.98%  syscall.syscall
+        90ms 14.75% 55.74%      140ms 22.95%  runtime.mapassign_faststr <-- 👀
+        40ms  6.56% 62.30%      490ms 80.33%  main.main
+        40ms  6.56% 68.85%       40ms  6.56%  runtime.madvise
+        30ms  4.92% 73.77%       40ms  6.56%  runtime.mallocgc
+
+  $ go tool pprof -top cpuprofile.optimized
+  Duration: 613.82ms, Total samples = 390ms (63.54%)
+  Showing nodes accounting for 390ms, 100% of 390ms total
+        flat  flat%   sum%        cum   cum%
+       300ms 76.92% 76.92%      300ms 76.92%  syscall.syscall
+        20ms  5.13% 82.05%      370ms 94.87%  main.main
+        20ms  5.13% 87.18%       30ms  7.69%  runtime.mapaccess2_faststr <-- 👀
+        10ms  2.56% 89.74%       50ms 12.82%  main.increment (inline)
+        10ms  2.56% 92.31%       10ms  2.56%  memeqbody
+
+* どういうことなのか
+
+[[https://news.ycombinator.com/item?id=26466371][HackerNews]]とか[[https://lobste.rs/s/3byl7t/performance_comparison_counting_words#c_hv9zcp][Lobsters]]でも「速度差が出る理由がわからん…」と言われている。
+
+[[https://github.com/golang/go/issues/45021][golang/go#45021]]の解説が正しいように思える。
+
+
+👉 ポインタ版では、処理系による最適化が効いて、`map` にアクセスするときの `string(word)` をメモリ確保なしで実行してくれる
+
+  var v []byte
+  s = string(v) // 普通はメモリ確保される
+
+  var m map[string]int
+  _ = m[string(v)] // mapにアクセスするときは最適化が効いてメモリ確保されない
+  
+
+* もうちょっと詳しく
+
+1. `counts[string(word)]` でmapの値にアクセスするときには、メモリ確保なしで `[]bytes` を `string` に変換する最適化パスを通る。
+2. `counts[string(word)]++` のようにmapに対する代入処理を呼び出したときには、新しくキーを追加する可能性があるので、メモリ確保して `[]bytes` を `string` に変換する。
+
+  var m map[string]int
+  _ = m[string(v)] // 1
+  m[string(v)]++   // 2
+
+* ポインタ使わずに回避できないのか？
+
+- 現状の実装では無理かも
+- `map[string]int` に対する代入処理でメモリ確保が起きないパスはないのでは
